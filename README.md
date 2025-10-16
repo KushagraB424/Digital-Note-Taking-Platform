@@ -44,7 +44,3 @@ python app.py
 - **Edit**: Click on any note to edit its content
 - **Delete**: Remove notes you no longer need
 - **Tags**: Add comma-separated tags to organize your notes
-
-## License
-
-MIT License - feel free to use and modify for your own projects!
