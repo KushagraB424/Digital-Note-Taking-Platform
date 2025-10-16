@@ -2,12 +2,17 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 import sqlite3
 from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
+import os
 
 app = Flask(__name__)
-app.secret_key = "supersecretkey" 
+# Use environment variable for secret key in production
+app.secret_key = os.environ.get('SECRET_KEY', 'supersecretkey')
+
+# Use absolute path for database
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'notes.db')
 
 def init_db():
-    conn = sqlite3.connect("notes.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     c.execute('''CREATE TABLE IF NOT EXISTS notes (
@@ -15,7 +20,9 @@ def init_db():
                     title TEXT NOT NULL,
                     content TEXT NOT NULL,
                     tags TEXT,
-                    date TEXT)''')
+                    date TEXT,
+                    user_id INTEGER,
+                    FOREIGN KEY(user_id) REFERENCES users(id))''')
 
     c.execute('''CREATE TABLE IF NOT EXISTS users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,7 +34,7 @@ def init_db():
 init_db()
 
 def get_db_connection():
-    conn = sqlite3.connect("notes.db")
+    conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -68,6 +75,7 @@ def login():
 
         if user and check_password_hash(user['password'], password):
             session['user'] = username
+            session['user_id'] = user['id']
             flash("Login successful!")
             return redirect(url_for('index'))
         else:
@@ -78,6 +86,7 @@ def login():
 @app.route('/logout')
 def logout():
     session.pop('user', None)
+    session.pop('user_id', None)
     flash("Logged out successfully.")
     return redirect(url_for('login'))
 
@@ -87,7 +96,9 @@ def index():
         return redirect(url_for('login'))
 
     conn = get_db_connection()
-    notes = conn.execute("SELECT * FROM notes ORDER BY date DESC").fetchall()
+    # Show only user's own notes
+    notes = conn.execute("SELECT * FROM notes WHERE user_id=? ORDER BY date DESC", 
+                         (session['user_id'],)).fetchall()
     conn.close()
     return render_template("index.html", notes=notes, user=session['user'])
 
@@ -103,8 +114,8 @@ def add_note():
         date = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         conn = get_db_connection()
-        conn.execute("INSERT INTO notes (title, content, tags, date) VALUES (?, ?, ?, ?)",
-                     (title, content, tags, date))
+        conn.execute("INSERT INTO notes (title, content, tags, date, user_id) VALUES (?, ?, ?, ?, ?)",
+                     (title, content, tags, date, session['user_id']))
         conn.commit()
         conn.close()
 
@@ -124,15 +135,18 @@ def edit_note(note_id):
         title = request.form['title']
         content = request.form['content']
         tags = request.form['tags']
-        c.execute("UPDATE notes SET title=?, content=?, tags=?, date=? WHERE id=?",
-                  (title, content, tags, datetime.now().strftime("%Y-%m-%d %H:%M"), note_id))
+        c.execute("UPDATE notes SET title=?, content=?, tags=?, date=? WHERE id=? AND user_id=?",
+                  (title, content, tags, datetime.now().strftime("%Y-%m-%d %H:%M"), note_id, session['user_id']))
         conn.commit()
         conn.close()
         return redirect(url_for('index'))
     else:
-        c.execute("SELECT * FROM notes WHERE id=?", (note_id,))
+        c.execute("SELECT * FROM notes WHERE id=? AND user_id=?", (note_id, session['user_id']))
         note = c.fetchone()
         conn.close()
+        if note is None:
+            flash("Note not found or unauthorized.")
+            return redirect(url_for('index'))
         return render_template("edit_note.html", note=note)
 
 @app.route('/delete/<int:note_id>')
@@ -141,7 +155,7 @@ def delete_note(note_id):
         return redirect(url_for('login'))
 
     conn = get_db_connection()
-    conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
+    conn.execute("DELETE FROM notes WHERE id=? AND user_id=?", (note_id, session['user_id']))
     conn.commit()
     conn.close()
     return redirect(url_for('index'))
@@ -155,11 +169,14 @@ def search():
     if request.method == 'POST':
         query = request.form['query']
         conn = get_db_connection()
-        results = conn.execute("SELECT * FROM notes WHERE title LIKE ? OR content LIKE ? OR tags LIKE ?",
-                               ('%' + query + '%', '%' + query + '%', '%' + query + '%')).fetchall()
+        results = conn.execute("""SELECT * FROM notes 
+                                  WHERE (title LIKE ? OR content LIKE ? OR tags LIKE ?) 
+                                  AND user_id=?""",
+                               ('%' + query + '%', '%' + query + '%', '%' + query + '%', session['user_id'])).fetchall()
         conn.close()
 
     return render_template("search.html", results=results, user=session['user'])
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
