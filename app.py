@@ -6,11 +6,23 @@ import os
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'supersecretkey')
+
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'notes.db')
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+
+    # Check if notes table exists and has user_id column
+    c.execute("PRAGMA table_info(notes)")
+    columns = [column[1] for column in c.fetchall()]
+    
+    if 'user_id' not in columns and 'id' in columns:
+        # Migration: Add user_id column to existing notes table
+        print("Migrating database: adding user_id column...")
+        c.execute("ALTER TABLE notes ADD COLUMN user_id INTEGER")
+        conn.commit()
+        print("Migration complete!")
 
     c.execute('''CREATE TABLE IF NOT EXISTS notes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -93,9 +105,9 @@ def index():
         return redirect(url_for('login'))
 
     conn = get_db_connection()
-    # Show only user's own notes
-    notes = conn.execute("SELECT * FROM notes WHERE user_id=? ORDER BY date DESC", 
-                         (session['user_id'],)).fetchall()
+    # Show only user's own notes (or notes without user_id for backward compatibility)
+    notes = conn.execute("SELECT * FROM notes WHERE user_id=? OR user_id IS NULL ORDER BY date DESC", 
+                         (session.get('user_id'),)).fetchall()
     conn.close()
     return render_template("index.html", notes=notes, user=session['user'])
 
@@ -112,7 +124,7 @@ def add_note():
 
         conn = get_db_connection()
         conn.execute("INSERT INTO notes (title, content, tags, date, user_id) VALUES (?, ?, ?, ?, ?)",
-                     (title, content, tags, date, session['user_id']))
+                     (title, content, tags, date, session.get('user_id')))
         conn.commit()
         conn.close()
 
@@ -132,13 +144,13 @@ def edit_note(note_id):
         title = request.form['title']
         content = request.form['content']
         tags = request.form['tags']
-        c.execute("UPDATE notes SET title=?, content=?, tags=?, date=? WHERE id=? AND user_id=?",
-                  (title, content, tags, datetime.now().strftime("%Y-%m-%d %H:%M"), note_id, session['user_id']))
+        c.execute("UPDATE notes SET title=?, content=?, tags=?, date=? WHERE id=? AND (user_id=? OR user_id IS NULL)",
+                  (title, content, tags, datetime.now().strftime("%Y-%m-%d %H:%M"), note_id, session.get('user_id')))
         conn.commit()
         conn.close()
         return redirect(url_for('index'))
     else:
-        c.execute("SELECT * FROM notes WHERE id=? AND user_id=?", (note_id, session['user_id']))
+        c.execute("SELECT * FROM notes WHERE id=? AND (user_id=? OR user_id IS NULL)", (note_id, session.get('user_id')))
         note = c.fetchone()
         conn.close()
         if note is None:
@@ -152,7 +164,7 @@ def delete_note(note_id):
         return redirect(url_for('login'))
 
     conn = get_db_connection()
-    conn.execute("DELETE FROM notes WHERE id=? AND user_id=?", (note_id, session['user_id']))
+    conn.execute("DELETE FROM notes WHERE id=? AND (user_id=? OR user_id IS NULL)", (note_id, session.get('user_id')))
     conn.commit()
     conn.close()
     return redirect(url_for('index'))
@@ -168,8 +180,8 @@ def search():
         conn = get_db_connection()
         results = conn.execute("""SELECT * FROM notes 
                                   WHERE (title LIKE ? OR content LIKE ? OR tags LIKE ?) 
-                                  AND user_id=?""",
-                               ('%' + query + '%', '%' + query + '%', '%' + query + '%', session['user_id'])).fetchall()
+                                  AND (user_id=? OR user_id IS NULL)""",
+                               ('%' + query + '%', '%' + query + '%', '%' + query + '%', session.get('user_id'))).fetchall()
         conn.close()
 
     return render_template("search.html", results=results, user=session['user'])
