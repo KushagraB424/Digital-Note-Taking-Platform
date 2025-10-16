@@ -1,54 +1,125 @@
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, session, flash
 import sqlite3
 from datetime import datetime
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
+app.secret_key = "supersecretkey" 
 
-# ---------- Database Setup ----------
 def init_db():
     conn = sqlite3.connect("notes.db")
     c = conn.cursor()
+
     c.execute('''CREATE TABLE IF NOT EXISTS notes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
                     content TEXT NOT NULL,
                     tags TEXT,
                     date TEXT)''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password TEXT NOT NULL)''')
     conn.commit()
     conn.close()
 
 init_db()
 
-# ---------- Routes ----------
+def get_db_connection():
+    conn = sqlite3.connect("notes.db")
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        hashed_password = generate_password_hash(password)
+        conn = get_db_connection()
+        c = conn.cursor()
+
+        try:
+            c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_password))
+            conn.commit()
+            flash("Signup successful! Please log in.")
+            return redirect(url_for('login'))
+        except sqlite3.IntegrityError:
+            flash("Username already exists. Please try another.")
+        finally:
+            conn.close()
+
+    return render_template("signup.html")
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        conn = get_db_connection()
+        c = conn.cursor()
+        c.execute("SELECT * FROM users WHERE username=?", (username,))
+        user = c.fetchone()
+        conn.close()
+
+        if user and check_password_hash(user['password'], password):
+            session['user'] = username
+            flash("Login successful!")
+            return redirect(url_for('index'))
+        else:
+            flash("Invalid username or password.")
+
+    return render_template("login.html")
+
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    flash("Logged out successfully.")
+    return redirect(url_for('login'))
+
 @app.route('/')
 def index():
-    conn = sqlite3.connect("notes.db")
-    c = conn.cursor()
-    c.execute("SELECT * FROM notes ORDER BY date DESC")
-    notes = c.fetchall()
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    conn = get_db_connection()
+    notes = conn.execute("SELECT * FROM notes ORDER BY date DESC").fetchall()
     conn.close()
-    return render_template("index.html", notes=notes)
+    return render_template("index.html", notes=notes, user=session['user'])
 
 @app.route('/add_note', methods=['GET', 'POST'])
 def add_note():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
     if request.method == 'POST':
         title = request.form['title']
         content = request.form['content']
         tags = request.form['tags']
         date = datetime.now().strftime("%Y-%m-%d %H:%M")
-        conn = sqlite3.connect("notes.db")
-        c = conn.cursor()
-        c.execute("INSERT INTO notes (title, content, tags, date) VALUES (?, ?, ?, ?)",
-                  (title, content, tags, date))
+
+        conn = get_db_connection()
+        conn.execute("INSERT INTO notes (title, content, tags, date) VALUES (?, ?, ?, ?)",
+                     (title, content, tags, date))
         conn.commit()
         conn.close()
+
         return redirect(url_for('index'))
+
     return render_template("add_note.html")
 
 @app.route('/edit/<int:note_id>', methods=['GET', 'POST'])
 def edit_note(note_id):
-    conn = sqlite3.connect("notes.db")
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    conn = get_db_connection()
     c = conn.cursor()
+
     if request.method == 'POST':
         title = request.form['title']
         content = request.form['content']
@@ -66,25 +137,29 @@ def edit_note(note_id):
 
 @app.route('/delete/<int:note_id>')
 def delete_note(note_id):
-    conn = sqlite3.connect("notes.db")
-    c = conn.cursor()
-    c.execute("DELETE FROM notes WHERE id=?", (note_id,))
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
+    conn = get_db_connection()
+    conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
     conn.commit()
     conn.close()
     return redirect(url_for('index'))
 
 @app.route('/search', methods=['GET', 'POST'])
 def search():
+    if 'user' not in session:
+        return redirect(url_for('login'))
+
     results = []
     if request.method == 'POST':
         query = request.form['query']
-        conn = sqlite3.connect("notes.db")
-        c = conn.cursor()
-        c.execute("SELECT * FROM notes WHERE title LIKE ? OR content LIKE ? OR tags LIKE ?",
-                  ('%' + query + '%', '%' + query + '%', '%' + query + '%'))
-        results = c.fetchall()
+        conn = get_db_connection()
+        results = conn.execute("SELECT * FROM notes WHERE title LIKE ? OR content LIKE ? OR tags LIKE ?",
+                               ('%' + query + '%', '%' + query + '%', '%' + query + '%')).fetchall()
         conn.close()
-    return render_template("search.html", results=results)
-    
+
+    return render_template("search.html", results=results, user=session['user'])
+
 if __name__ == "__main__":
     app.run(debug=True)
