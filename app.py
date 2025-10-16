@@ -5,10 +5,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import os
 
 app = Flask(__name__)
-# Use environment variable for secret key in production
 app.secret_key = os.environ.get('SECRET_KEY', 'supersecretkey')
-
-# Use absolute path for database
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'notes.db')
 
 def init_db():
