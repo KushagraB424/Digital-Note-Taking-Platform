@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Personal Knowledge Hub</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header>
+    <h1>📒 Personal Knowledge Hub</h1>
+    <nav>
+        <a href="{{ url_for('index') }}" >🏠 HOME</a> |
+        <a href="{{ url_for('add_note') }}">➕ Add Note</a> |
+        <a href="{{ url_for('search') }}">🔍 Search</a>
+    </nav>
+</header>
+<div class="container">
+    {% block content %}{% endblock %}
+</div>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block content %}
+<h2>Search Notes</h2>
+<form method="post">
+    <input type="text" name="query" placeholder="Search by title, content, or tags">
+    <button type="submit">Search</button>
+</form>
+{% for note in results %}
+<div class="note">
+    <h3>{{ note[1] }}</h3>
+    <p>{{ note[2]|safe }}</p>
+    <p><b>Tags:</b> {{ note[3] }} | <small>{{ note[4] }}</small></p>
+</div>
+{% endfor %}
+{% endblock %}
